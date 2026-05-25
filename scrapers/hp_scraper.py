@@ -16,7 +16,8 @@ TIMEOUT = 10
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 CONTACT_KEYWORDS = ["contact", "お問い合わせ", "問い合わせ", "inquiry", "form", "メール"]
 FAKE_EMAIL_EXTS = (".png", ".jpg", ".gif", ".woff", ".svg", ".webp", ".css", ".js")
-FAKE_EMAIL_DOMAINS = ("sentry.io", "example.com", "yourdomain", "domain.com")
+FAKE_EMAIL_DOMAINS = ("sentry.io", "example.com", "yourdomain", "domain.com",
+                      "wixpress.com", "squarespace.com", "amazonaws.com")
 
 
 def _fetch(url: str) -> BeautifulSoup | None:
@@ -32,6 +33,13 @@ def _is_real_email(em: str) -> bool:
     if any(em.endswith(ext) for ext in FAKE_EMAIL_EXTS):
         return False
     if any(d in em for d in FAKE_EMAIL_DOMAINS):
+        return False
+    # TLD が短すぎる or 長すぎる（正規ドメインは2〜6文字）
+    tld = em.rsplit(".", 1)[-1].lower()
+    if not (2 <= len(tld) <= 6):
+        return False
+    # プロトコル名・URLパーツが混入しているケースを除外
+    if tld in ("http", "https", "html", "php", "asp", "aspx", "www"):
         return False
     return True
 

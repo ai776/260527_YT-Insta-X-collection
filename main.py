@@ -58,17 +58,17 @@ def read_rows(spreadsheet_id: str) -> list[dict]:
 
 
 def write_row(spreadsheet_id: str, row_num: int, record: PersonRecord):
-    """O〜AA列を1行分書き込む（フォロワー数は空欄のまま）"""
+    """O〜AA列を1行分書き込む"""
     svc = _service()
     values = [
         record.email,            # O: メールアドレス
         record.contact_form_url, # P: 問い合わせページ
         record.company_hp,       # Q: HP
         record.blog_url,         # R: ブログ
-        record.youtube_url,      # S: YouTube
-        "",                      # T: YouTube登録者数（今回は対象外）
+        record.youtube_url,          # S: YouTube
+        record.youtube_subscribers,  # T: YouTube登録者数
         record.x_url,            # U: Twitter
-        "",                      # V: Twitterフォロワー数
+        record.x_followers,      # V: Twitterフォロワー数
         "",                      # W: TwitterDM有無
         record.facebook_url,     # X: Facebook
         "",                      # Y: Facebookフォロワー数

@@ -13,6 +13,8 @@ class PersonRecord:
     email: str = ""
     contact_form_url: str = ""
     blog_url: str = ""
+    youtube_subscribers: str = ""
+    x_followers: str = ""
     youtube_email: str = ""
     notes: str = ""
 
@@ -28,6 +30,7 @@ class PersonRecord:
             self.email,
             self.contact_form_url,
             self.blog_url,
+            self.youtube_subscribers,
             self.youtube_email,
             self.notes,
         ]

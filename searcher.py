@@ -42,14 +42,15 @@ def _search(query: str, num: int = 5) -> list[dict]:
 def _best_profile_url(items: list[dict], domains: list[str]) -> str:
     """プロフィールページらしいURLを優先して返す"""
     candidates = [item.get("link", "") for item in items]
-    # パスが浅い（プロフィール本体）ものを優先
+    # 除外パターン（投稿・動画・非公式ページ）
+    EXCLUDE = ["/status/", "/watch?", "playlist?", "/videos/", "/posts/", "/p/",
+               "facebook.com/pages/"]  # Facebook非公式ページ（/pages/{名前}/{ID}形式）を除外
+    # パスが浅い公式プロフィールを優先
     for url in candidates:
         if any(d in url for d in domains):
-            path = url.split("/", 3)[-1] if url.count("/") >= 3 else ""
-            # 投稿・動画・プレイリストURLを除外
-            if not any(x in url for x in ["/status/", "/watch?", "playlist?", "/videos/", "/posts/", "/p/"]):
+            if not any(x in url for x in EXCLUDE):
                 return url
-    # なければ最初のヒット
+    # 除外パターンに引っかかったものをフォールバックとして返す
     for url in candidates:
         if any(d in url for d in domains):
             return url
@@ -105,7 +106,9 @@ def search_email(record: PersonRecord, delay: float = 1.0) -> PersonRecord:
             # スニペット内からメールを探す
             snippet = item.get("snippet", "") + item.get("link", "")
             for em in EMAIL_RE.findall(snippet):
-                if not any(f in em for f in FAKE):
+                tld = em.rsplit(".", 1)[-1].lower()
+                bad_tld = tld in ("http", "https", "html", "php", "asp", "aspx", "www")
+                if not any(f in em for f in FAKE) and 2 <= len(tld) <= 6 and not bad_tld:
                     record.email = em
                     return record
     except Exception as e:

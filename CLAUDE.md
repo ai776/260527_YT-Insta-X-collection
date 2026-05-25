@@ -98,6 +98,38 @@ svc.values().update(
 ).execute()
 ```
 
+### Step 3: YouTubeチャンネル登録者数をブラウザで取得（T列補完）
+
+T列（登録者数）が空でS列（YouTube）がある行に対してブラウザ操作で取得する。  
+**Claude Code のセッション内（Claude-in-Chrome が使える状態）で実行すること。**
+
+#### 対象URLの確認
+```bash
+source ~/.bash_profile
+python3 youtube_subs_batch.py --sheet-id 1tP78UIB4BNby6bUdvI38OqrhoijdOx7GZJXLYDuuIAg --limit 20
+```
+
+#### ブラウザ操作手順（1チャンネルあたり）
+
+1. 対象URLをブラウザで開く
+2. JS実行でページテキストから登録者数を取得:
+   ```javascript
+   document.body.innerText.match(/チャンネル登録者数\s*([\d.,]+\s*[万千億]?(?:\s*人)?)/)?.[1]
+   ```
+3. 取得できた値を T列に書き込む
+
+#### シートへの書き込み
+```python
+from sheets import _service
+svc = _service()
+svc.values().update(
+    spreadsheetId="1tP78UIB4BNby6bUdvI38OqrhoijdOx7GZJXLYDuuIAg",
+    range="ビジネス書!T{行番号}",
+    valueInputOption="RAW",
+    body={"values": [["5.6万"]]},
+).execute()
+```
+
 ## コスト感
 
 | 処理 | 消費 |
