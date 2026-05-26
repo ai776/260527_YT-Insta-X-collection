@@ -6,9 +6,11 @@
     python3 main.py --sheet-id <ID> [--limit 10] [--overwrite]
 """
 import argparse
+import json
 import os
 import sys
 import time
+from dataclasses import asdict
 
 from sheets import _service
 from searcher import search_sns, search_hp, search_blog, search_email
@@ -18,6 +20,7 @@ from models import PersonRecord
 
 SHEET_ID = None  # 引数で渡す
 SHEET_NAME = "シート1"  # 実際のシート名
+STAGING_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "staging")
 
 # O列=15番目(index 14) 〜 AA列=27番目(index 26)
 # O:メール P:問い合わせ Q:HP R:ブログ S:YouTube T:YT登録者 U:Twitter
@@ -58,30 +61,28 @@ def read_rows(spreadsheet_id: str) -> list[dict]:
 
 
 def write_row(spreadsheet_id: str, row_num: int, record: PersonRecord):
-    """O〜AA列を1行分書き込む"""
+    """ステージングJSONに記録し、N列に未検証マーカーのみシート書き込み。
+    本番列(O〜AA)への書き込みは promote.py 経由でのみ実行される。"""
+    # N列に未検証マーカーを付与（サブエージェント検証完了後 promote.py でクリア）
     svc = _service()
-    values = [
-        record.email,            # O: メールアドレス
-        record.contact_form_url, # P: 問い合わせページ
-        record.company_hp,       # Q: HP
-        record.blog_url,         # R: ブログ
-        record.youtube_url,          # S: YouTube
-        record.youtube_subscribers,  # T: YouTube登録者数
-        record.x_url,            # U: Twitter
-        record.x_followers,      # V: Twitterフォロワー数
-        "",                      # W: TwitterDM有無
-        record.facebook_url,     # X: Facebook
-        "",                      # Y: Facebookフォロワー数
-        record.instagram_url,    # Z: Instagram
-        "",                      # AA: Instagramフォロワー数
-    ]
-    range_ = f"{SHEET_NAME}!O{row_num}:AA{row_num}"
     svc.values().update(
         spreadsheetId=spreadsheet_id,
-        range=range_,
+        range=f"{SHEET_NAME}!N{row_num}",
         valueInputOption="RAW",
-        body={"values": [values]},
+        body={"values": [["⚠️未検証（サブエージェントで本人特定後に promote.py で昇格）"]]},
     ).execute()
+    # ステージングJSONに保存（本番列には書かない）
+    os.makedirs(STAGING_DIR, exist_ok=True)
+    safe_sheet = SHEET_NAME.replace("/", "_")
+    path = os.path.join(STAGING_DIR, f"{safe_sheet}_{row_num}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "sheet_name": SHEET_NAME,
+            "row_num": row_num,
+            "name": record.name,
+            "record": asdict(record),
+            "verified": False,
+        }, f, ensure_ascii=False, indent=2)
 
 
 def process(name: str, company: str = "") -> PersonRecord:
@@ -145,11 +146,18 @@ def main():
             write_row(args.sheet_id, row["row_num"], record)
             print(f"  X={record.x_url or '-'}, YT={record.youtube_url or '-'}, "
                   f"Mail={record.email or '-'}, Form={record.contact_form_url or '-'}")
+            print(f"  ⚠️ 未検証: この行はサブエージェントで本人特定が必要です（行{row['row_num']}）")
         except Exception as e:
             print(f"  エラー: {e}")
         time.sleep(0.5)
 
     print(f"\n完了: {len(all_targets)} 件処理しました")
+    print("=" * 60)
+    print("⚠️ 必須次工程: 各行についてサブエージェント(general-purpose)で")
+    print("   本人特定 + URL検証を行ってからシートを確定すること。")
+    print("   省略すると同名別人・別組織への誤マッチが残ります。")
+    print("   詳細は .claude/skills/sales-list-collect/SKILL.md を参照。")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
