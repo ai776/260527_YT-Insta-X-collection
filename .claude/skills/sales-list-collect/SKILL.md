@@ -47,6 +47,18 @@ ID: `1tP78UIB4BNby6bUdvI38OqrhoijdOx7GZJXLYDuuIAg`
 
 ## ワークフロー
 
+### 処理順の原則: 3SNS → 2SNS → 1SNS
+
+人物統合シートで「SNS数」列の降順に処理する。営業効果が高い層から潰す。
+
+| 優先度 | 対象 | 理由 |
+|---|---|---|
+| 1 | SNS数=3 | 全SNSで活動中＝最有力ターゲット |
+| 2 | SNS数=2 | 活動規模ある層 |
+| 3 | SNS数=1 | 数が多く効率悪い。フォロワー数で更にフィルタ推奨 |
+
+> 1SNSのみ層が大半（数千件）になるので、フォロワー数閾値（例: 1万以上）で更に絞ってから着手するのが現実的。
+
 ### Step 1: SNS・HP・メール・ブログ収集（サブエージェント方式）
 
 各人物につき `general-purpose` サブエージェントを1体起動し、WebSearch + WebFetch で本人特定→公式情報を取得する。複数人を**並列実行**できる（5〜10体推奨）。
@@ -84,9 +96,82 @@ WebSearch/WebFetchで以下を特定:
 
 #### 結果の保存
 
-1. 検証ログを **必ず** `verifications/{シート名}_{行番号}_{ハンドル}.md` に保存
+1. 検証ログを **必ず** `verifications/{シート名}_{データ行番号}_{ハンドル}.md` に保存（行番号はデータ行=1始まり、シート行ではない）
 2. confidence と evidence を残す
 3. シートのN列(備考)に `所属:X / ※サブエージェント検証済(信頼度)` を記載
+
+#### セルの記載ルール（厳守）
+
+未取得項目を1表記で済ませず、状態に応じて使い分ける:
+
+| 表記 | 意味 |
+|---|---|
+| URL/メール記載 | 確認済み |
+| **未確認** | 調査したが見つからなかった（実在する可能性は残る） |
+| **該当なし** | 公式運用なしが濃厚（事務所所属で公式FB持たない、本人がbioで「やってません」と明記等、状況証拠が揃う場合） |
+| 空セル | 未調査 |
+
+サブエージェントの evidence が「確認できず」「未公開」等の場合は **未確認** を使用。
+「公式運用なし」「掲載なし」と明確に断言できる場合のみ **該当なし** を使う。
+
+#### Step 1.5: SNSリンク相互検証（推奨）
+
+サブエージェントが特定したHP/Blog/問い合わせURLが本物かを、**そのページに記載されているSNSリンクが既知URLと一致するか**で二重チェックする。
+
+##### サブエージェントへの依頼テンプレート
+
+```
+HPに記載されているSNSリンクが既知のSNSアカウントと一致するか検証してください。
+
+## 対象人物: {氏名}
+## 検証先URL
+- HP: {HP_URL}
+- Blog: {Blog_URL}（あれば）
+
+## 既知の本人SNS
+- YouTube: {YT_URL}
+- Instagram: {IG_URL}
+- X: {X_URL}
+
+## 手順
+1. WebFetchで各URLを開く
+2. ページ内のSNSリンク（YT/IG/X/FB等）を全て抽出
+3. 既知URLと一致するか比較
+
+## 出力
+{"hp_status":"reachable|unreachable","sns_found":{...},
+ "match":{"youtube":"match|mismatch|not_found",...},
+ "verdict":"confirmed_self|suspicious|inconclusive","note":"..."}
+```
+
+##### 判定の扱い
+
+| verdict | 行の背景色 | RGB | 扱い |
+|---|---|---|---|
+| `confirmed_self` | 🟢 緑 | (0.85, 0.95, 0.85) | N列備考に `※SNSリンク相互一致✓` を追記 |
+| `inconclusive` | 🟡 黄 | (1.0, 0.9, 0.6) | HPがリンクハブ系/事務所経由でSNS記載なし。N列に `※SNSクロス検証不可(理由)` を追記 |
+| `suspicious` | 🔴 赤 | (1.0, 0.8, 0.8) | **誤マッチ疑い**。HPを空に戻し、サブエージェント再調査 |
+
+##### 色付けコード例
+
+```python
+from sheets import _service
+svc=_service()
+SID='<SHEET_ID>'
+sid=<sheetId>  # 対象シートのID
+# 行N (1-indexed) を緑にする例
+svc.batchUpdate(spreadsheetId=SID, body={'requests':[{
+  'repeatCell':{
+    'range':{'sheetId':sid,'startRowIndex':N-1,'endRowIndex':N,
+              'startColumnIndex':0,'endColumnIndex':18},
+    'cell':{'userEnteredFormat':{'backgroundColor':{'red':0.85,'green':0.95,'blue':0.85}}},
+    'fields':'userEnteredFormat.backgroundColor'
+  }}]}).execute()
+```
+
+##### 注意
+- HP上のYouTubeリンクは `youtube.com/channel/UC...` 形式のことがある。チャンネル名で本人確認すれば match 扱いでOK
+- TikTok/楽天ROOM等の追加SNSがbioに載っていれば、ハンドル一致を本人確証の補強として使える
 
 #### 取得率の実測（2026-05時点）
 
@@ -98,6 +183,20 @@ WebSearch/WebFetchで以下を特定:
 > ⚠️ **Step 1完了後は必ずStep 2/2.5/3/4/5を実行すること。**  
 > 各SNSのフォロワー数・YT概要のメールはブラウザ操作でしか取れない。  
 > Step 2.5（youtube_email_batch.py）をスキップするとO列が永久に空のままになる。
+
+### 共通: 休眠アカウント検出（Step 2〜5に組み込む）
+
+各SNSのフォロワー数取得時、**最終投稿日も同時に取得**してN列備考に追記する。半年以上更新なしのアカウントは営業効率が悪いため除外対象とする。
+
+| SNS | 最終投稿日の取得方法 |
+|---|---|
+| YouTube | チャンネル動画タブ最新動画の投稿日（`yt-formatted-string#metadata-line` 等） |
+| Instagram | プロフィール最新投稿の日付（投稿開いて確認） |
+| X | プロフィール最新ツイートのタイムスタンプ |
+| Facebook | 最新投稿の日付 |
+
+備考に `※YT最終投稿2024-11 / IG最終2025-08` のように記載。  
+**最終投稿が現在から6ヶ月超のアカウントは行を黄色(休眠候補)**にマークすると視覚的に分かる。
 
 ### Step 2: YouTube 登録者数をブラウザで取得（T列）
 
