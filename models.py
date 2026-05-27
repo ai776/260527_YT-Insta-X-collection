@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 class PersonRecord:
     name: str
     company: str = ""
+    handle: str = ""
     x_url: str = ""
     facebook_url: str = ""
     youtube_url: str = ""

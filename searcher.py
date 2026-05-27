@@ -15,10 +15,16 @@ SNS_SITES = [
 
 SKIP_HP = ("x.com", "twitter.com", "facebook.com", "youtube.com",
            "instagram.com", "amazon.co.jp", "wikipedia.org", "ameblo.jp",
-           "note.com", "lit.link", "inquir", "contact", "/form", "/inquiry")
+           "note.com", "lit.link", "linktr.ee", "tiktok.com", "threads.net",
+           "threads.com", "lin.ee", "linktree", "potofu.me", "profcard.info",
+           "inquir", "contact", "/form", "/inquiry")
 
 BLOG_DOMAINS = ["ameblo.jp", "note.com", "hatenablog.com", "livedoor.blog",
                 "fc2.com/blog", "jugem.jp", "seesaa.net", "blog.jp"]
+
+# 単一記事ページを示唆するパス（プロフィール/トップではない）
+BLOG_ARTICLE_PATTERNS = ("/entry-", "/entry/", "/n/", "/p/", "/posts/",
+                          "/archive/", "/article/", "?p=")
 
 
 def _api_key() -> str:
@@ -75,17 +81,22 @@ def search_sns(record: PersonRecord, delay: float = 1.0) -> PersonRecord:
 
 
 def search_blog(record: PersonRecord, delay: float = 1.0) -> PersonRecord:
-    """ブログURL を検索（ameba・note・はてなブログ等）"""
+    """ブログURL を検索（プロフィール/トップページのみ、記事ページは除外）"""
     if record.blog_url:
         return record
-    query = f'{record.name} {record.company} ブログ'
+    hint = f' {record.handle}' if record.handle else ''
+    query = f'{record.name} {record.company}{hint} ブログ'
     try:
-        items = _search(query, num=5)
+        items = _search(query, num=8)
+        # 第1優先: プロフィール/トップページ (記事URLパターンを除外)
         for item in items:
             url = item.get("link", "")
-            if any(d in url for d in BLOG_DOMAINS):
-                record.blog_url = url
-                break
+            if not any(d in url for d in BLOG_DOMAINS):
+                continue
+            if any(p in url for p in BLOG_ARTICLE_PATTERNS):
+                continue
+            record.blog_url = url
+            break
     except Exception as e:
         record.notes += f"[ブログ検索エラー: {e}] "
     time.sleep(delay)
@@ -96,21 +107,41 @@ def search_email(record: PersonRecord, delay: float = 1.0) -> PersonRecord:
     """メールアドレスを直接検索する"""
     if record.email:
         return record
-    query = f'{record.name} {record.company} メールアドレス contact email'
+    hint = f' {record.handle}' if record.handle else ''
+    query = f'{record.name} {record.company}{hint} メールアドレス contact email'
+    # HPドメインを取得（採用判定で使用）
+    hp_domain = ""
+    if record.company_hp:
+        from urllib.parse import urlparse
+        try:
+            hp_domain = urlparse(record.company_hp).netloc.lower().lstrip("www.")
+        except Exception:
+            hp_domain = ""
     try:
         items = _search(query, num=5)
         import re
         EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
         FAKE = (".png", ".jpg", ".gif", ".woff", ".svg", "example.com", "sentry.io")
+        # 大手企業ドメイン（同名別人由来の混入をブロック）
+        CORP_BLOCK = ("smbc-card.com", "mufg.jp", "rakuten.co.jp", "amazon.co.jp",
+                       "yahoo.co.jp", "google.com", "apple.com", "microsoft.com",
+                       "softbank.jp", "ntt.co.jp", "kddi.com", "docomo.ne.jp",
+                       "jp.com", "jal.co.jp", "ana.co.jp", "info@info.")
         for item in items:
-            # スニペット内からメールを探す
-            snippet = item.get("snippet", "") + item.get("link", "")
+            snippet = item.get("snippet", "") + " " + item.get("link", "")
             for em in EMAIL_RE.findall(snippet):
+                em_lower = em.lower()
                 tld = em.rsplit(".", 1)[-1].lower()
                 bad_tld = tld in ("http", "https", "html", "php", "asp", "aspx", "www")
-                if not any(f in em for f in FAKE) and 2 <= len(tld) <= 6 and not bad_tld:
-                    record.email = em
-                    return record
+                if any(f in em_lower for f in FAKE): continue
+                if any(c in em_lower for c in CORP_BLOCK): continue
+                if not (2 <= len(tld) <= 6) or bad_tld: continue
+                # HPドメインが既知の場合は一致するもののみ採用
+                em_domain = em_lower.split("@", 1)[1] if "@" in em_lower else ""
+                if hp_domain and em_domain and hp_domain not in em_domain and em_domain not in hp_domain:
+                    continue
+                record.email = em
+                return record
     except Exception as e:
         record.notes += f"[メール検索エラー: {e}] "
     time.sleep(delay)
@@ -122,20 +153,32 @@ def search_hp(record: PersonRecord, delay: float = 1.0) -> PersonRecord:
     if record.company_hp:
         return record
 
-    # クエリを複数試して最初にヒットした公式っぽいURLを使う
+    # ハンドル名併用で本人特定強化（SNS表示名は芸名のため）
+    hint = f' {record.handle}' if record.handle else ''
     queries = [
-        f'{record.name} {record.company} 公式サイト',
-        f'{record.name} {record.company} オフィシャルサイト',
+        f'{record.name}{hint} 公式サイト',
+        f'{record.name}{hint} オフィシャルサイト',
         f'{record.name} {record.company} 会社概要',
     ]
+    # 第三者メディア/EC等を除外（インフルエンサーは記事/販売ページが上位ヒットしやすい）
+    THIRD_PARTY = ("cosme.net", "kadokawa", "shogakukan", "shueisha",
+                    "store.", "shop.", "/feature/", "/interview/",
+                    "/article/", "/products/", "prtimes.jp", "natalie.mu",
+                    "modelpress.com", "oricon.co.jp", "/news/")
+    handle_keys = [k.lower() for k in [record.handle or ""] if k]
     try:
         for query in queries:
-            items = _search(query, num=5)
+            items = _search(query, num=8)
             for item in items:
-                url = item.get("link", "")
-                if not any(s in url for s in SKIP_HP):
-                    record.company_hp = url
-                    break
+                url = item.get("link", "").lower()
+                if not url: continue
+                if any(s in url for s in SKIP_HP): continue
+                if any(s in url for s in THIRD_PARTY): continue
+                # ハンドル名が含まれていれば本人HPの可能性が高い
+                if handle_keys and not any(k in url for k in handle_keys):
+                    continue
+                record.company_hp = item.get("link", "")
+                break
             if record.company_hp:
                 break
             time.sleep(delay)

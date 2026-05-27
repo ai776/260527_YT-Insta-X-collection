@@ -2,8 +2,9 @@
 name: sales-list-collect
 description: >
   著者名リストが入ったGoogleスプレッドシートを受け取り、
-  SNS・メール・問い合わせフォーム・HP・ブログを自動収集してO〜AA列に書き込む。
-  Serper.dev（Google検索）＋HPスクレイピング＋各SNSブラウザ操作の4段階で取得。
+  SNS・メール・問い合わせフォーム・HP・ブログを収集してO〜AA列に書き込む。
+  サブエージェント(general-purpose)による本人特定＋ブラウザ操作で取得する方式。
+  ※Serper.dev は誤マッチ多発のため2026-05時点で廃止。
 tags:
   - sales
   - scraping
@@ -26,47 +27,76 @@ ID: `1tP78UIB4BNby6bUdvI38OqrhoijdOx7GZJXLYDuuIAg`
 
 | 列 | 収集内容 | 取得方法 |
 |----|---------|---------|
-| O  | メールアドレス | HPスクレイピング / Googleスニペット / Facebook / YouTube |
-| P  | 問い合わせページURL | HPスクレイピング |
-| Q  | 会社HP・公式サイト | Serper検索 |
-| R  | ブログ（ameba/note/はてな等） | Serper検索 |
-| S  | YouTube チャンネル | Serper検索 |
+| O  | メールアドレス | **サブエージェント調査** / HPスクレイピング / Facebook / YouTube |
+| P  | 問い合わせページURL | **サブエージェント調査** / HPスクレイピング |
+| Q  | 会社HP・公式サイト | **サブエージェント調査**（WebSearch+WebFetch） |
+| R  | ブログ（ameba/note/はてな等） | **サブエージェント調査** |
+| S  | YouTube チャンネル | **サブエージェント調査**（or 既知URL） |
 | T  | YouTube 登録者数 | ブラウザ操作（`youtube_subs_batch.py`） |
-| U  | Twitter/X | Serper検索 |
+| U  | Twitter/X | **サブエージェント調査**（or 既知URL） |
 | V  | Twitterフォロワー数 | ブラウザ操作（`x_followers_batch.py`） |
 | W  | TwitterDM有無 | ブラウザ操作（XプロフィールJS） |
-| X  | Facebook | Serper検索 ※非公式ページに注意、目視確認推奨 |
+| X  | Facebook | **サブエージェント調査**（目視確認推奨） |
 | Y  | Facebookフォロワー数 | ブラウザ操作（Facebookページ） |
-| Z  | Instagram | Serper検索 |
+| Z  | Instagram | **サブエージェント調査**（or 既知URL） |
 | AA | Instagramフォロワー数 | ブラウザ操作（Instagramページ） |
+
+> ⚠️ **Serper.dev は本スキルから廃止しました（2026-05）。**  
+> インフルエンサーの本名と異なるSNS表示名（芸名・キャッチコピー）では同名別人の誤マッチが頻発するため、Serperでの自動収集は中止。代わりに `general-purpose` サブエージェントが WebSearch + WebFetch で本人特定→公式情報を取得する方式に統一。  
+> 旧 `searcher.py` `main.py` は残存しているが新規実行では使わない。
 
 ## ワークフロー
 
-### Step 1: SNS・HP・メール・ブログの一括収集
+### Step 1: SNS・HP・メール・ブログ収集（サブエージェント方式）
 
-```bash
-source ~/.bash_profile
+各人物につき `general-purpose` サブエージェントを1体起動し、WebSearch + WebFetch で本人特定→公式情報を取得する。複数人を**並列実行**できる（5〜10体推奨）。
 
-# テスト（3件）
-python3 main.py --sheet-id <SHEET_ID> --limit 3
+#### サブエージェントへの依頼テンプレート
 
-# 特定行だけ上書き確認
-python3 main.py --sheet-id <SHEET_ID> --row 2 --overwrite
+```
+「{氏名}」というインフルエンサー/著者の本人特定と連絡先を調査してください。
 
-# 全件実行
-python3 main.py --sheet-id <SHEET_ID>
+## 既知情報
+- YouTube: {URL}（チャンネル名「{表示名}」、登録{N}万）
+- Instagram: {URL}（フォロワー{N}万）
+- X: {URL}（フォロワー{N}万）
+- ハンドル: {handle}
+
+## 調査依頼
+WebSearch/WebFetchで以下を特定:
+1. 所属事務所/会社HP・公式サイト
+2. メールアドレス（仕事依頼用）
+3. 問い合わせフォームURL
+4. ブログ（ameba/note等含む）
+5. Facebook
+
+## 重要
+- 同名別人に注意。SNSハンドル `{handle}` と一致する人物のみ採用
+- URLは実在性をWebFetchで確認
+- 確証取れないものは「未確認」と明記
+
+## 出力形式
+```json
+{"company_hp":"","email":"","contact_form_url":"","blog_url":"",
+ "facebook_url":"","confidence":"high|medium|low","evidence":"根拠2-3行"}
+```
 ```
 
-処理内容（1人あたり最大3 APIリクエスト）:
-1. Serper.dev で X/Facebook/YouTube/Instagram を個別検索
-2. HP トップページを検索 → スクレイピングでメール・問い合わせフォーム抽出
-3. ブログ（ameba/note/はてな等）を検索
-4. メールが見つからない場合は Google スニペットから取得
+#### 結果の保存
 
-途中停止しても再実行すれば未入力行から続行する。
+1. 検証ログを **必ず** `verifications/{シート名}_{行番号}_{ハンドル}.md` に保存
+2. confidence と evidence を残す
+3. シートのN列(備考)に `所属:X / ※サブエージェント検証済(信頼度)` を記載
 
-> ⚠️ **Step 1完了後は必ずStep 2とStep 2.5を実行すること。**  
-> S列にYouTube URLがある著者のO列メールはStep 1では取得できない。  
+#### 取得率の実測（2026-05時点）
+
+サブエージェント方式で得られた結果（パイロット4人）:
+- 3人がhigh信頼度で本人特定成功
+- 1人がmedium（公式HPなし、SNS完結タイプ）
+- Serper方式と比較して**誤マッチほぼゼロ・取得率大幅向上**
+
+> ⚠️ **Step 1完了後は必ずStep 2/2.5/3/4/5を実行すること。**  
+> 各SNSのフォロワー数・YT概要のメールはブラウザ操作でしか取れない。  
 > Step 2.5（youtube_email_batch.py）をスキップするとO列が永久に空のままになる。
 
 ### Step 2: YouTube 登録者数をブラウザで取得（T列）
@@ -222,24 +252,24 @@ svc.values().update(
 
 | 項目 | 内容 |
 |------|------|
-| 環境変数 | `SERPER_KEY`（~/.bash_profile に設定済み） |
+| 環境変数 | （Serper廃止により不要） |
 | 認証ファイル | `credentials.json`（プロジェクトフォルダに配置） |
 | シート共有 | `id-60525-sns-collection@sns-collection-497403.iam.gserviceaccount.com` に編集者権限 |
 | ブラウザ操作 | Claude Code + Claude-in-Chrome MCP が必要（Step 2〜5） |
 
 ## コスト
 
-- Serper.dev 無料枠 2,500件/月 → 約 800〜1,200 人分処理可能
+- サブエージェント方式: 1人あたり ~30秒・並列5〜10体で時短可能
 - ブラウザ操作（YouTube/X/Facebook/Instagram）は無料（時間コストのみ）
 
 ## ⚠️ 最重要ワークフロー（厳守）
 
 **各行を処理する際、必ず以下の順序で実行すること:**
 
-1. `main.py --row N --overwrite` で自動収集
-2. **即座にサブエージェント（general-purpose）で本人特定 & URL検証を実施**（怪しいかどうかに関わらず必ず）
-3. ブラウザ（Claude-in-Chrome）で各SNSのフォロワー数を取得
-4. シートに書き込み
+1. **サブエージェント（general-purpose）で本人特定 & 連絡先調査**（Step 1のテンプレート使用）
+2. 検証ログを `verifications/` に保存（confidence + evidence を残す）
+3. ブラウザ（Claude-in-Chrome）で各SNSのフォロワー数を取得（Step 2〜5）
+4. シートに書き込み（O〜AA列 + N列備考）
 5. 参照シート（1US8ucThOaxWvI9oxnmA0yXx0lmYxT4VYdGS2AW7tKys）と比較
 
 **なぜサブエージェント調査が抜けるのか（根本原因）**:
